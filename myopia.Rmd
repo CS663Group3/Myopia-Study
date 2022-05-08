@@ -1,0 +1,202 @@
+---
+title: "myopia"
+author: "jb4686"
+date: "5/7/2022"
+output: pdf_document
+---
+
+
+
+```{r}
+library(pacman)
+p_load(tidyverse, data.table, fs, tictoc, lubridate, beepr,dplyr,skimr, rpart,mdsr, tidymodels,dplyr, forcats, rsample, Boruta, randomForest, splitTools, ROCit, rminer, parsnip, yardstick, caret)
+```
+
+```{r}
+myopia <- read.csv("myopia.csv")
+head(myopia)
+```
+
+```{r}
+library(splitTools)
+split<- partition(myopia$MYOPIC, p = c(train = 0.7, valid = 0.15, test = 0.15))
+
+train2 <- myopia[split$train, ]
+valid2 <- myopia[split$valid, ]
+test2 <- myopia[split$test, ]
+```
+
+
+
+
+
+## Performed Backward Variable Selection and Eliminate SkinThickness and Insulin 
+
+
+```{r}
+train2$MYOPIC <- as.factor(train2$MYOPIC)
+test2$MYOPIC <- as.factor(test2$MYOPIC)
+valid2$MYOPIC <- as.factor(valid2$MYOPIC)
+```
+
+```{r}
+train2$MOMMY <- as.factor(train2$MOMMY)
+test2$MOMMY <- as.factor(test2$MOMMY)
+valid2$MOMMY <- as.factor(valid2$MOMMY)
+```
+
+
+```{r}
+train2$DADMY <- as.factor(train2$DADMY)
+test2$DADMY <- as.factor(test2$DADMY)
+valid2$DADMY <- as.factor(valid2$DADMY)
+```
+
+
+```{r}
+glmfit2<- glm(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY, family = binomial, data = train2)
+summary(glmfit2)
+```
+
+
+
+
+```{r}
+library(randomForest)
+library(rpart)
+set.seed(10)
+formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY)
+mod_forest1 <- rand_forest(
+  mode = "classification", 
+  mtry = 12, 
+  trees = 500
+) %>%
+  set_engine("randomForest") %>%
+  fit(formula, data = train2)
+
+```
+
+
+## Accuracy 
+
+
+```{r}
+library(yardstick)
+set.seed(10)
+pred_sample1 <- valid2 %>%
+  select(MYOPIC) %>%
+  bind_cols(
+    predict(mod_forest1, new_data = valid2 , type = "class")
+  ) %>%
+  rename(myopia_tree_matrix = .pred_class)
+  
+pred_sample1 %>%
+  conf_mat(MYOPIC, myopia_tree_matrix)
+pred_sample1 %>%
+  accuracy(MYOPIC, myopia_tree_matrix)
+```
+
+
+
+```{r}
+library(yardstick)
+set.seed(10)
+pred2 <- test2%>%
+  select(MYOPIC) %>%
+  bind_cols(
+    predict(mod_forest1, new_data = test2, type = "class")
+  ) %>%
+  rename(myopia_tree_matrix2 = .pred_class)
+pred2  %>%
+  conf_mat(MYOPIC, myopia_tree_matrix2)
+pred2 %>%
+  accuracy(MYOPIC, myopia_tree_matrix2)
+```
+
+### cross validation and Accuracy
+
+
+
+
+```{r}
+library(caret)
+set.seed(10)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 5, repeats = 10)
+# auto-tune a random forest
+grid_rf <- expand.grid(.mtry = c(1, 2, 3, 4, 5, 6))
+set.seed(1000)
+m_rf1_test <- train(formula, data = valid2, method = "rf",
+              metric = "Kappa", trControl = ctrl,
+              tuneGrid = grid_rf)
+
+
+myopia_pred_traindata <- predict(m_rf1_test, valid2)
+confusionMatrix(data=myopia_pred_traindata,valid2$MYOPIC)
+myopiapred_testdata <- predict(m_rf1_test,test2)
+confusionMatrix(data=myopiapred_testdata, test2$MYOPIC)
+```
+
+
+## Validation accuracy
+
+```{r}
+
+library(tidyverse)
+set.seed(10)
+formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY)
+
+myopia_glm <- logistic_reg(penalty = 0.001, mixture = 0.5) %>% 
+  set_engine("glmnet") %>%
+  set_mode("classification") %>%
+  fit(formula, data = train2)
+
+myopia_glm %>%
+  predict(valid2) %>%
+  rename(myopia_logistic_validation = .pred_class)%>%
+  bind_cols(valid2$MYOPIC) %>%
+  accuracy(valid2$MYOPIC, myopia_logistic_validation)
+
+```
+
+
+## Testing accuracy
+
+```{r}
+set.seed(10)
+myopia_glm %>%
+  predict(test2) %>%
+  rename(myopia_logistic_test = .pred_class)%>%
+  bind_cols(test2$MYOPIC) %>%
+  accuracy(test2$MYOPIC, myopia_logistic_test)
+```
+
+```{r}
+library(caret)
+set.seed(10)
+# auto-tune a random forest
+set.seed(1000)
+ctrl <- trainControl(method = "repeatedcv",
+                     number = 6, repeats = 10)
+glm_test <- train(formula, data=valid2, method='glm', trControl = ctrl, 
+                    tuneGrid=expand.grid(parameter=c(0.001, 0.01, 0.1, 1,10,100, 1000)))
+
+
+myopia_pred_traindata2 <- predict(glm_test, valid2)
+confusionMatrix(data=myopia_pred_traindata2,valid2$MYOPIC)
+myopiapred_testdata2 <- predict(glm_test,test2)
+confusionMatrix(data=myopiapred_testdata2, test2$MYOPIC)
+```
+
+## Predict the probability of being a diabetic using logistic or random forest model 
+
+
+```{r}
+new_x <- data.frame(Pregnancies= 0,  Glucose = 90, BloodPressure = 120,  BMI = 20, DiabetesPedigreeFunction = 0, Age = 30)
+predict(diabetes_glm, new_data= new_x, type = "prob")
+
+
+new_x <- data.frame(Pregnancies= 0,  Glucose = 90, BloodPressure = 120,  BMI = 20, DiabetesPedigreeFunction = 0, Age = 30)
+predict(mod_forest1 , new_data= new_x, type = "prob")
+```
+
