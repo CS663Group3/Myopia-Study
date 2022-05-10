@@ -9,13 +9,17 @@ output: pdf_document
 
 ```{r}
 library(pacman)
-p_load(tidyverse, data.table, fs, tictoc, lubridate, beepr,dplyr,skimr, rpart,mdsr, tidymodels,dplyr, forcats, rsample, Boruta, randomForest, splitTools, ROCit, rminer, parsnip, yardstick, caret)
+p_load(tidyverse, data.table, fs, tictoc, lubridate, beepr,dplyr,skimr, rpart,tidymodels,dplyr, forcats, rsample, Boruta, randomForest, splitTools, ROCit, rminer, parsnip, yardstick, caret, gbm)
 ```
+## import dataset
+
 
 ```{r}
 myopia <- read.csv("myopia.csv")
 head(myopia)
 ```
+
+## split data
 
 ```{r}
 library(splitTools)
@@ -24,14 +28,12 @@ split<- partition(myopia$MYOPIC, p = c(train = 0.7, valid = 0.15, test = 0.15))
 train2 <- myopia[split$train, ]
 valid2 <- myopia[split$valid, ]
 test2 <- myopia[split$test, ]
+
 ```
 
 
 
-
-
-## Performed Backward Variable Selection and Eliminate SkinThickness and Insulin 
-
+## Factor reponse variable
 
 ```{r}
 train2$MYOPIC <- as.factor(train2$MYOPIC)
@@ -52,23 +54,37 @@ test2$DADMY <- as.factor(test2$DADMY)
 valid2$DADMY <- as.factor(valid2$DADMY)
 ```
 
+## Feature Selection with logistic regression
 
 ```{r}
-glmfit2<- glm(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY, family = binomial, data = train2)
-summary(glmfit2)
+glm<- glm(MYOPIC ~ STUDYYEAR+ AGE + GENDER + SPHEQ + AL + ACD + LT + VCD + SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY, data = myopia, family = binomial)
 ```
 
 
 
+```{r}
+library(gbm)
+varImp(glm)
+```
+
+## Feature Selection with random Forest
+
+```{r}
+rf <- randomForest(MYOPIC ~ STUDYYEAR+ AGE + GENDER + SPHEQ + AL + ACD + LT + VCD + SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY, data=myopia,importance=TRUE, ntree=250)
+varImp(rf)
+varImpPlot(rf)
+```
+
+## Fit Random Forest
 
 ```{r}
 library(randomForest)
 library(rpart)
 set.seed(10)
-formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY)
+formula <- as.formula(MYOPIC ~ STUDYYEAR+ GENDER + SPHEQ +SPORTHR + READHR + COMPHR+STUDYHR+ DIOPTERHR+ MOMMY + DADMY)
 mod_forest1 <- rand_forest(
   mode = "classification", 
-  mtry = 12, 
+  mtry = 10, 
   trees = 500
 ) %>%
   set_engine("randomForest") %>%
@@ -116,8 +132,6 @@ pred2 %>%
 ### cross validation and Accuracy
 
 
-
-
 ```{r}
 library(caret)
 set.seed(10)
@@ -138,13 +152,15 @@ confusionMatrix(data=myopiapred_testdata, test2$MYOPIC)
 ```
 
 
-## Validation accuracy
+
+
+## GLM model
 
 ```{r}
 
 library(tidyverse)
 set.seed(10)
-formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ + AL+ SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+DIOPTERHR+ MOMMY + DADMY)
+formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ +SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+ MOMMY + DADMY)
 
 myopia_glm <- logistic_reg(penalty = 0.001, mixture = 0.5) %>% 
   set_engine("glmnet") %>%
@@ -169,16 +185,22 @@ myopia_glm %>%
   rename(myopia_logistic_test = .pred_class)%>%
   bind_cols(test2$MYOPIC) %>%
   accuracy(test2$MYOPIC, myopia_logistic_test)
+
 ```
+
+## cross validate GLM
 
 ```{r}
 library(caret)
 set.seed(10)
 # auto-tune a random forest
+
+formula <- as.formula(MYOPIC ~ AGE + GENDER + SPHEQ +SPORTHR + READHR + COMPHR+STUDYHR+ TVHR+ MOMMY + DADMY)
+
 set.seed(1000)
 ctrl <- trainControl(method = "repeatedcv",
                      number = 6, repeats = 10)
-glm_test <- train(formula, data=valid2, method='glm', trControl = ctrl, 
+glm_test <- train(formula, data=train2, method='glm', trControl = ctrl, 
                     tuneGrid=expand.grid(parameter=c(0.001, 0.01, 0.1, 1,10,100, 1000)))
 
 
@@ -186,17 +208,30 @@ myopia_pred_traindata2 <- predict(glm_test, valid2)
 confusionMatrix(data=myopia_pred_traindata2,valid2$MYOPIC)
 myopiapred_testdata2 <- predict(glm_test,test2)
 confusionMatrix(data=myopiapred_testdata2, test2$MYOPIC)
-```
 
-## Predict the probability of being a diabetic using logistic or random forest model 
+
+```
 
 
 ```{r}
-new_x <- data.frame(Pregnancies= 0,  Glucose = 90, BloodPressure = 120,  BMI = 20, DiabetesPedigreeFunction = 0, Age = 30)
-predict(diabetes_glm, new_data= new_x, type = "prob")
-
-
-new_x <- data.frame(Pregnancies= 0,  Glucose = 90, BloodPressure = 120,  BMI = 20, DiabetesPedigreeFunction = 0, Age = 30)
-predict(mod_forest1 , new_data= new_x, type = "prob")
+summary(glm_test)
 ```
+
+```{r}
+glm_test$finalModel
+```
+
+## Prediction
+```{r}
+
+new_data<- data.frame(AGE = 10, GENDER = 0, SPHEQ = 0, SPORTHR = 40, READHR = 10, COMPHR = 10, STUDYHR = 20, TVHR = 5, MOMMY = "1" , DADMY = "1")
+predict(glm_test, new_data, type = "prob")
+
+```
+
+## Interpretation
+
+$$\widehat{log(Myopia)} = 43.7636 -2.0811 AGE -0.3685 GENDER -6.8455 SPHEQ - 0.0682 SPORTHR + 0.3876 READHR + 0.1026 COMPHR - 0.3666 STUDYHR + 0.2080 TVHR+ 0.3638 MOMMY + 0.5317 DADMY$$
+
+
 
